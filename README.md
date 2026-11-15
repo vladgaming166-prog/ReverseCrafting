@@ -15,10 +15,14 @@ Works automatically after install. No commands, permissions, GUIs, or config.
 - Paper 1.20.x through 26.2 / 26.3
 - Java 17 or newer
 
+## Download
+
+A prebuilt plugin jar is in [`dist/ReverseCrafting.jar`](dist/ReverseCrafting.jar). Put that file in your server’s `plugins` folder.
+
 ## Build
 
 ```bash
 mvn -q package
 ```
 
-The plugin jar is written to `target/ReverseCrafting.jar`.
+That writes `target/ReverseCrafting.jar`. The same file is also copied to `dist/ReverseCrafting.jar`.
