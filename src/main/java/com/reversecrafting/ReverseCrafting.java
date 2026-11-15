@@ -8,10 +8,12 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
+import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
+import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -20,44 +22,102 @@ import com.reversecrafting.ReverseRecipes.ReverseCraft;
 
 public final class ReverseCrafting extends JavaPlugin implements Listener {
 
-    private final ReverseRecipes recipes = new ReverseRecipes();
+    private ReverseRecipes recipes;
 
     @Override
     public void onEnable() {
-        recipes.rebuild();
+        getDataFolder().mkdirs();
+        recipes = new ReverseRecipes(this);
         getServer().getPluginManager().registerEvents(this, this);
+        recipes.rebuild();
+        getLogger().info("Plugin enabled successfully!");
+        getLogger().info("Reverse crafting system initialized!");
+        getServer().getScheduler().runTask(this, recipes::rebuild);
+    }
+
+    @Override
+    public void onDisable() {
+        if (recipes != null) {
+            recipes.unregister();
+        }
+    }
+
+    @EventHandler
+    public void onServerLoad(ServerLoadEvent event) {
+        recipes.rebuild();
     }
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onPrepareCraft(PrepareItemCraftEvent event) {
-        if (event.getRecipe() != null) {
+        if (event.isRepair()) {
             return;
         }
         CraftingInventory inventory = event.getInventory();
         ReverseCraft craft = recipes.detect(inventory);
-        inventory.setResult(craft == null ? null : craft.preview());
+        if (craft != null) {
+            inventory.setResult(craft.preview());
+            return;
+        }
+        if (inventory.getRecipe() == null) {
+            inventory.setResult(null);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onCraftItem(CraftItemEvent event) {
+        handleResultTake(event);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
+        if (event instanceof CraftItemEvent) {
+            return;
+        }
+        if (!(event.getView().getTopInventory() instanceof CraftingInventory crafting)) {
+            return;
+        }
+        ReverseCraft craft = recipes.detect(crafting);
+        if (craft == null) {
+            scheduleRefresh(crafting, event.getWhoClicked() instanceof Player player ? player : null);
+            return;
+        }
+        if (event.getClick() == ClickType.DOUBLE_CLICK && matchesReward(event.getCursor(), craft)) {
+            event.setCancelled(true);
+            return;
+        }
+        if (!isResultSlot(event)) {
+            scheduleRefresh(crafting, event.getWhoClicked() instanceof Player player ? player : null);
+            return;
+        }
+        handleResultTake(event);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (!(event.getView().getTopInventory() instanceof CraftingInventory crafting)) {
+            return;
+        }
+        if (event.getRawSlots().contains(0) && recipes.detect(crafting) != null) {
+            event.setCancelled(true);
+            return;
+        }
+        if (event.getWhoClicked() instanceof Player player) {
+            scheduleRefresh(crafting, player);
+        }
+    }
+
+    private void handleResultTake(InventoryClickEvent event) {
         if (!(event.getView().getTopInventory() instanceof CraftingInventory crafting)) {
             return;
         }
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-
         ReverseCraft craft = recipes.detect(crafting);
         if (craft == null) {
             return;
         }
-
-        if (event.getClick() == ClickType.DOUBLE_CLICK && matchesReward(event.getCursor(), craft)) {
-            event.setCancelled(true);
-            return;
-        }
-
-        if (event.getSlotType() != InventoryType.SlotType.RESULT) {
+        if (!isResultSlot(event) && !(event instanceof CraftItemEvent)) {
             return;
         }
 
@@ -71,18 +131,21 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
             default -> {
             }
         }
+        refresh(crafting);
         player.updateInventory();
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onInventoryDrag(InventoryDragEvent event) {
-        if (!(event.getView().getTopInventory() instanceof CraftingInventory crafting)) {
-            return;
-        }
-        if (!event.getRawSlots().contains(0) || recipes.detect(crafting) == null) {
-            return;
-        }
-        event.setCancelled(true);
+    private boolean isResultSlot(InventoryClickEvent event) {
+        return event.getRawSlot() == 0 || event.getSlotType() == InventoryType.SlotType.RESULT;
+    }
+
+    private void scheduleRefresh(CraftingInventory crafting, Player player) {
+        getServer().getScheduler().runTask(this, () -> {
+            refresh(crafting);
+            if (player != null) {
+                player.updateInventory();
+            }
+        });
     }
 
     private void takeOneToCursor(Player player, CraftingInventory crafting, ReverseCraft craft) {
@@ -95,7 +158,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
             }
             player.setItemOnCursor(first);
             giveRest(player, rewards, 1);
-            refresh(crafting);
             return;
         }
         if (!cursor.isSimilar(first) || cursor.getAmount() + first.getAmount() > cursor.getMaxStackSize()) {
@@ -107,7 +169,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
         cursor.setAmount(cursor.getAmount() + first.getAmount());
         player.setItemOnCursor(cursor);
         giveRest(player, rewards, 1);
-        refresh(crafting);
     }
 
     private void takeManyToInventory(Player player, CraftingInventory crafting, ReverseCraft craft) {
@@ -125,7 +186,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
                 giveOrDrop(player, reward);
             }
         }
-        refresh(crafting);
     }
 
     private void takeOneToHotbar(Player player, CraftingInventory crafting, ReverseCraft craft, int hotbarSlot) {
@@ -141,7 +201,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
             }
             player.getInventory().setItem(hotbarSlot, first);
             giveRest(player, rewards, 1);
-            refresh(crafting);
             return;
         }
         if (!hotbar.isSimilar(first) || hotbar.getAmount() + first.getAmount() > hotbar.getMaxStackSize()) {
@@ -153,7 +212,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
         hotbar.setAmount(hotbar.getAmount() + first.getAmount());
         player.getInventory().setItem(hotbarSlot, hotbar);
         giveRest(player, rewards, 1);
-        refresh(crafting);
     }
 
     private void takeOneToOffhand(Player player, CraftingInventory crafting, ReverseCraft craft) {
@@ -166,7 +224,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
             }
             player.getInventory().setItemInOffHand(first);
             giveRest(player, rewards, 1);
-            refresh(crafting);
             return;
         }
         if (!offhand.isSimilar(first) || offhand.getAmount() + first.getAmount() > offhand.getMaxStackSize()) {
@@ -178,7 +235,6 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
         offhand.setAmount(offhand.getAmount() + first.getAmount());
         player.getInventory().setItemInOffHand(offhand);
         giveRest(player, rewards, 1);
-        refresh(crafting);
     }
 
     private void dropOne(Player player, CraftingInventory crafting, ReverseCraft craft) {
@@ -188,12 +244,17 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
         for (ItemStack reward : craft.rewards()) {
             player.getWorld().dropItemNaturally(player.getLocation(), reward);
         }
-        refresh(crafting);
     }
 
     private void refresh(CraftingInventory crafting) {
         ReverseCraft craft = recipes.detect(crafting);
-        crafting.setResult(craft == null ? null : craft.preview());
+        if (craft != null) {
+            crafting.setResult(craft.preview());
+            return;
+        }
+        if (crafting.getRecipe() == null) {
+            crafting.setResult(null);
+        }
     }
 
     private static void giveRest(Player player, List<ItemStack> rewards, int start) {
@@ -218,7 +279,7 @@ public final class ReverseCrafting extends JavaPlugin implements Listener {
                 return true;
             }
         }
-        return false;
+        return item.getType().name().contains("BUNDLE");
     }
 
     private static int maxFits(ItemStack[] storage, List<ItemStack> rewards, int maxTimes) {

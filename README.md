@@ -8,7 +8,7 @@ If a recipe uses more than one material type, the result slot shows the first in
 
 Enchanted, renamed, damaged, or otherwise modified items cannot be reverse-crafted. Vanilla crafting recipes are left untouched.
 
-Works automatically after install. No commands, permissions, GUIs, or config.
+Works automatically after install. No commands, permissions, GUIs, or config. On first enable the plugin creates `plugins/ReverseCrafting/`.
 
 ## Requirements
 
