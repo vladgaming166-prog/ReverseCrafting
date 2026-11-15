@@ -1,0 +1,6 @@
+name: ReverseCrafting
+version: ${project.version}
+main: com.reversecrafting.ReverseCrafting
+api-version: "1.20"
+author: Vlad Gaming
+description: Reverse-craft vanilla items into their original crafting materials.
